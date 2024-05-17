@@ -1,14 +1,10 @@
-import asyncio
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, scrolledtext
 import random
 import sqlite3
-
-import Console_GUI
-import fightclass
+import threading
 import fighters
 import exceptions
-import BotThread
 
 
 def clear_window(window):
@@ -48,6 +44,9 @@ class FighterSelectionWindow:
         select_button = tk.Button(self.root, text="Выбрать", command=self.select_fighters)
         select_button.grid(row=3, column=1)
 
+        back_button = tk.Button(self.root, text="Назад", command=self.back_to_main_menu)
+        back_button.grid(row=4, column=1)
+
     def select_fighter_class(self, fighter):
         if "Боксер" in fighter:
             return fighters.Boxer(fighter)
@@ -59,16 +58,24 @@ class FighterSelectionWindow:
             raise exceptions.IncorrectInputExcError
 
     def select_fighters(self):
-        first_fighter = self.select_fighter_class(self.first_fighter_var.get())
-        second_fighter = self.select_fighter_class(self.second_fighter_var.get())
+        first_fighter_name = self.first_fighter_var.get()
+        second_fighter_name = self.second_fighter_var.get()
 
-        if first_fighter == "Выберите бойца" or second_fighter == "Выберите бойца":
+        if first_fighter_name == "Выберите бойца" or second_fighter_name == "Выберите бойца":
             messagebox.showerror("Ошибка", "Пожалуйста, выберите двух разных бойцов.")
         else:
-            clear_window(self.root)
-            self.selected_fighters = [first_fighter, second_fighter]
+            try:
+                first_fighter = self.select_fighter_class(first_fighter_name)
+                second_fighter = self.select_fighter_class(second_fighter_name)
+                clear_window(self.root)
+                self.selected_fighters = [first_fighter, second_fighter]
+                MatchWindow(self.root, self.selected_fighters[0], self.selected_fighters[1])
+            except exceptions.IncorrectInputExcError:
+                messagebox.showerror("Ошибка", "Произошла ошибка при выборе бойцов.")
 
-            MatchWindow(self.root, self.selected_fighters[0], self.selected_fighters[1])
+    def back_to_main_menu(self):
+        clear_window(self.root)
+        InterFace(self.root)
 
 
 class MatchWindow:
@@ -93,8 +100,6 @@ class MatchWindow:
         winner = None
         battle_log = ""
 
-        #self.temp_label.config(text="")
-
         while self.fighter1.health > 0 and self.fighter2.health > 0:
             ran_num = random.choice([1, 2])
             if ran_num == 1:
@@ -115,17 +120,13 @@ class MatchWindow:
         else:
             winner = self.fighter2
 
-        # loop = asyncio.get_event_loop()
-        # loop.run_until_complete(fightclass.Fight.BD_update(self.fighter1, self.fighter2))
-
         battle_log += f"Победил {winner.name}!"
         self.temp_label.config(text=battle_log)
         self.back_button.config(state=tk.NORMAL)
 
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(self.BD_update(winner))
+        self.BD_update(winner)
 
-    async def BD_update(self, winner):
+    def BD_update(self, winner):
         try:
             connection = sqlite3.connect('Fighter.db')
             cur = connection.cursor()
@@ -154,7 +155,7 @@ class MatchHistoryWindow:
         self.root = root
         self.root.title("История матчей")
 
-        self.text_area = tk.Text(self.root, width=55, height=20)
+        self.text_area = scrolledtext.ScrolledText(self.root,wrap=tk.WORD, width=55, height=20)
         self.text_area.pack()
 
         self.back_button = tk.Button(self.root, text="Назад", command=self.back_to_main_menu)
@@ -187,6 +188,66 @@ class MatchHistoryWindow:
         InterFace(self.root)
 
 
+class BattleWindow:
+    def __init__(self, root, thread_id, i):
+        self.window = tk.Toplevel(root)
+        self.i = i
+        self.window.title(f"Бой в потоке {thread_id}")
+        self.window.geometry(f"400x320")
+        self.text_area = scrolledtext.ScrolledText(self.window, wrap=tk.WORD, width=50, height=15)
+        self.text_area.pack(pady=10)
+        self.close_button = tk.Button(self.window, text="Закрыть", command=self.window.destroy)
+        self.close_button.pack(pady=10)
+
+    def update_battle_info(self, info):
+        self.text_area.insert(tk.END, info + "\n")
+        self.text_area.yview(tk.END)
+
+
+class BotFightThread(threading.Thread):
+    def __init__(self, thread_id, battle_window):
+        threading.Thread.__init__(self)
+        self.thread_id = thread_id
+        self.battle_window = battle_window
+
+    def run(self):
+        self.battle_window.update_battle_info(f"Запуск боя в потоке {self.thread_id}")
+        self.battle()
+
+    def battle(self):
+        fighters_1 = ['Боксер-1', 'Дзюдоист-1', 'Каратист-1']
+        fighters_2 = ['Боксер-2', 'Дзюдоист-2', 'Каратист-2']
+
+        fighter1 = self.select_fighter_class(random.choice(fighters_1))
+        fighter2 = self.select_fighter_class(random.choice(fighters_2))
+        while fighter1.health > 0 and fighter2.health > 0:
+            ran_num = random.choice([1, 2])
+            if ran_num == 1:
+                fighter1.attack(fighter2)
+                self.battle_window.update_battle_info(
+                    f"{fighter1.name} ударил {fighter2.name}! У {fighter2.name}: {fighter2.health} HP")
+            else:
+                fighter2.attack(fighter1)
+                self.battle_window.update_battle_info(
+                    f"{fighter2.name} ударил {fighter1.name}! У {fighter1.name}: {fighter1.health} HP")
+
+        if fighter1.health > 0:
+            winner = fighter1
+        else:
+            winner = fighter2
+        self.battle_window.update_battle_info(f"Победитель в потоке {self.thread_id}: {winner.name}")
+
+    def select_fighter_class(self, fighter):
+        if "Боксер" in fighter:
+            return fighters.Boxer(fighter)
+        elif "Дзюдоист" in fighter:
+            return fighters.Judoka(fighter)
+        elif "Каратист" in fighter:
+            return fighters.Karate(fighter)
+        else:
+            raise exceptions.IncorrectInputExcError
+
+
 class InterFace:
     def __init__(self, root):
         self.root = root
@@ -197,50 +258,34 @@ class InterFace:
         for i in range(len(commands)):
             button = tk.Button(self.root, text=f'{commands[i]}',
                                command=lambda option=i + 1: self.handle_button_click(option))
-            button.pack()
+            button.pack(pady=5)
 
     def handle_button_click(self, option):
         if option == 1:
-            self.open_fighter_selection_window()
+            clear_window(self.root)
+            FighterSelectionWindow(self.root)
         elif option == 2:
             self.create_threads()
         elif option == 3:
-            self.show_match_history()
+            clear_window(self.root)
+            MatchHistoryWindow(self.root)
         elif option == 4:
-            self.root.destroy()
-
-    def open_fighter_selection_window(self):
-        clear_window(self.root)
-        FighterSelectionWindow(self.root)
+            exit()
 
     def create_threads(self):
-        for i in range(2):
-            print(f'Бой номер {i + 1}')
-            name = 'Thread'
-            my_thread = Console_GUI.MyThread(name, i)
-            my_thread.start()
-            my_thread.join()
+        num_threads = 3
+        self.threads = []
+        self.battle_windows = []
 
-    def show_match_history(self):
-        clear_window(self.root)
-        MatchHistoryWindow(self.root)
-        # try:
-        #     connection = sqlite3.connect('Fighter.db')
-        #     cur = connection.cursor()
-        #     print("База данных создана и подключена к SQLite")
-        #     cur.execute("CREATE TABLE IF NOT EXISTS tHistory(name_of_win, hp_of_win)")
-        #
-        #     print('Прошлые матчи:')
-        #     res = cur.execute('SELECT * FROM tHistory')
-        #     print(res.fetchall(), '\n')
-        #
-        #     connection.commit()
-        #     connection.close()
-        #
-        # except sqlite3.Error:
-        #     print('Просмотреть историю матчей в данный момент невозможно')
+        for i in range(num_threads):
+            battle_window = BattleWindow(self.root, i, i)
+            self.battle_windows.append(battle_window)
+            thread = BotFightThread(i, battle_window)
+            self.threads.append(thread)
+            thread.start()
 
 
-root = tk.Tk()
-app = InterFace(root)
-root.mainloop()
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = InterFace(root)
+    root.mainloop()
